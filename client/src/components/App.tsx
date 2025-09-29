@@ -427,7 +427,15 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
           {task.status !== 'done' && (
             <button onClick={() => move(nextOf(task.status))} className="text-xs px-2 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500">↦</button>
           )}
-          <button onClick={toggleOpen} className="text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700">Open</button>
+          <button
+            onClick={toggleOpen}
+            aria-expanded={open}
+            title={open ? 'Close details' : 'Open details'}
+            className={`text-xs px-2 py-1 rounded-md hover:bg-slate-700 ${open ? 'bg-slate-700' : 'bg-slate-800'
+              }`}
+          >
+            {open ? 'Close' : 'Open'}
+          </button>
           <button onClick={remove} className="text-xs px-2 py-1 rounded-md bg-red-600 hover:bg-red-500">Delete</button>
         </div>
       </div>
@@ -588,7 +596,7 @@ function EditPanel({ task, onChanged }: { task: Task, onChanged: () => void }) {
         <label className="block text-sm">
           <div className="mb-1">
             <div className="font-medium">Tags</div>
-            <div className="text-xs text-slate-400">Only one tag</div>
+            <div className="text-xs text-slate-400">Separeted by commas</div>
           </div>
           <input
             value={tagsInput}
