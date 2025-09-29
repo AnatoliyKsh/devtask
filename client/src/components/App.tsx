@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
 import {
   listProjects, listTags, listTasks,
   createTask, createProject, deleteProject,
@@ -6,6 +6,13 @@ import {
 } from '../api'
 import type { Project, Tag, Task, Status } from '../types'
 import { marked } from 'marked'
+
+import { DndContext, useDroppable, useDraggable, DragEndEvent, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
+
+
+
+
 
 const statusColumns: { key: Status; title: string }[] = [
   { key: 'backlog', title: 'Backlog' },
@@ -25,6 +32,10 @@ export default function App() {
   const [loading, setLoading] = useState(false)
 
   const [activeTagId, setActiveTagId] = useState<string | null>(null)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  )
 
 
   const canCreate = !!activeProject;
@@ -95,6 +106,32 @@ export default function App() {
       }
     })()
   }, [])
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over) return
+
+    // id целевой колонки = ключ статуса
+    const toStatus = over.id as Status
+
+    // id таски = id draggable
+    const taskId = String(active.id)
+
+    // исходный статус, который мы записали в data draggable
+    const fromStatus = active.data?.current?.fromStatus as Status | undefined
+
+    if (!toStatus || !taskId) return
+    if (fromStatus && fromStatus === toStatus) return
+
+    try {
+      await setTaskStatus(taskId, toStatus)
+    } finally {
+      // обновим с учётом текущего проекта/тега
+      refresh(activeProject, activeTagId)
+    }
+  }
+
+
 
   useEffect(() => {
     if (activeProject) {
@@ -280,18 +317,19 @@ export default function App() {
 
             {loading && <div className="text-sm text-slate-400">Loading…</div>}
           </div>
-
-          <div className="grid grid-cols-4 gap-4">
-            {statusColumns.map(col => (
-              <Column
-                key={col.key}
-                title={col.title}
-                status={col.key}
-                tasks={filtered.filter(t => t.status === col.key)}
-                onChanged={() => refresh(activeProject, activeTagId)}
-              />
-            ))}
-          </div>
+          <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+            <div className="grid grid-cols-4 gap-4">
+              {statusColumns.map(col => (
+                <Column
+                  key={col.key}
+                  title={col.title}
+                  status={col.key}
+                  tasks={filtered.filter(t => t.status === col.key)}
+                  onChanged={() => refresh(activeProject, activeTagId)}
+                />
+              ))}
+            </div>
+          </DndContext>
         </main>
       </div>
     </div>
@@ -301,8 +339,14 @@ export default function App() {
 function Column({
   title, status, tasks, onChanged,
 }: { title: string, status: Status, tasks: Task[], onChanged: () => void }) {
+  const { setNodeRef, isOver } = useDroppable({ id: status })
+
   return (
-    <div className="rounded-2xl bg-slate-900/60 border border-slate-800 p-3">
+    <div
+      ref={setNodeRef}
+      className={`rounded-2xl bg-slate-900/60 border p-3 ${isOver ? 'border-indigo-500' : 'border-slate-800'
+        }`}
+    >
       <div className="text-sm font-semibold mb-2 text-slate-300">
         {title} <span className="text-slate-500">({tasks.length})</span>
       </div>
@@ -313,8 +357,21 @@ function Column({
   )
 }
 
+
 function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
   const [open, setOpen] = useState(false)
+
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,                               // уникальный id карточки
+    data: { taskId: task.id, fromStatus: task.status }, // передаём текущий статус
+  })
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.85 : 1,
+    cursor: 'grab',
+  }
+
+
   const [full, setFull] = useState<Task | null>(null)
 
   async function toggleOpen() {
@@ -337,10 +394,32 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
   }
 
   return (
-    <div className="rounded-xl bg-slate-900 border border-slate-800 p-3 hover:border-slate-700 transition overflow-hidden">
-      {/* Верхняя строка: заголовок + кнопки (кнопки могут переноситься, не вылезают) */}
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="rounded-xl bg-slate-900 border border-slate-800 p-3 hover:border-slate-700 transition overflow-hidden"
+    >      {/* Верхняя строка: заголовок + кнопки (кнопки могут переноситься, не вылезают) */}
       <div className="min-w-0">
-        <div className="font-medium truncate">{task.title}</div>
+        <div className="font-medium flex items-center gap-2">
+          <span
+            {...listeners}
+            {...attributes}
+            className="inline-flex items-center justify-center w-4 h-4 rounded bg-slate-800 text-slate-300 cursor-grab select-none"
+            title="Drag"
+          >
+            ⋮⋮
+          </span>
+
+          <span
+            className={open ? 'whitespace-normal break-words' : 'truncate'}
+            style={open ? { wordBreak: 'break-word' } : undefined}
+            title={task.title} // подсказка при свернутом состоянии
+          >
+            {task.title}
+          </span>
+        </div>
+
+
         <div className="mt-2 flex gap-1 flex-wrap">
           {task.status !== 'backlog' && (
             <button onClick={() => move('backlog')} className="text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700">↤</button>
@@ -360,10 +439,7 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
 
       {open && full && (
         <div className="mt-3 rounded-lg border border-slate-800 p-3 bg-slate-950/60">
-          <div
-            className="text-sm text-slate-300 mb-2 break-words"
-            dangerouslySetInnerHTML={{ __html: marked.parse(full.description || '') }}
-          />
+
           <div className="flex flex-wrap gap-2 my-2">
             {(full.tags || []).map(t => (
               <span
@@ -398,45 +474,101 @@ function nextOf(s: Status): Status {
 
 function DescriptionEditor({ task, onChanged }: { task: Task, onChanged: () => void }) {
   const [desc, setDesc] = useState(task.description || '')
+  const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [savedAt, setSavedAt] = useState<number | null>(null)
+
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
+
+  function autoGrow(el: HTMLTextAreaElement) {
+    el.style.height = '0px'
+    el.style.overflow = 'hidden'
+    const next = Math.min(el.scrollHeight, 400)
+    el.style.height = next + 'px'
+  }
+
+  // при переключении в режим редактирования подобрать высоту
+  useLayoutEffect(() => {
+    if (editing && taRef.current) autoGrow(taRef.current)
+  }, [editing])
+
+  // при наборе текста тоже
+  useLayoutEffect(() => {
+    if (editing && taRef.current) autoGrow(taRef.current)
+  }, [desc])
 
   async function save() {
     if (saving) return
     setSaving(true)
     try {
       await updateTask(task.id, { description: desc })
-      setSavedAt(Date.now())
-      onChanged() // перезагрузит данные и обновит превью markdown выше
+      setEditing(false)     // закрываем поле после сохранения
+      onChanged()           // перезагружаем данные с сервера
     } finally {
       setSaving(false)
     }
   }
 
+  function cancel() {
+    setDesc(task.description || '') // откат к исходному
+    setEditing(false)
+  }
+
   return (
     <div className="mt-2">
-      <div className="text-sm font-semibold mb-2">Description</div>
-
-      <textarea
-        value={desc}
-        onChange={e => setDesc(e.target.value)}
-        placeholder="Write description… (Markdown supported)"
-        className="w-full min-h-[120px] px-3 py-2 rounded-md bg-slate-900 border border-slate-800 outline-none"
-      />
-
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          onClick={save}
-          disabled={saving}
-          className="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {saving ? 'Saving…' : 'Save description'}
-        </button>
-        {savedAt && <span className="text-xs text-slate-400">Saved {new Date(savedAt).toLocaleTimeString()}</span>}
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm font-semibold">Description</div>
+        {!editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700"
+          >
+            Edit
+          </button>
+        )}
       </div>
+
+      {!editing ? (
+        // Просмотр (Markdown)
+        <div className="text-sm text-slate-300 whitespace-pre-wrap break-words">
+          {desc
+            ? <div dangerouslySetInnerHTML={{ __html: marked.parse(desc) }} />
+            : <span className="italic text-slate-500">No description</span>}
+        </div>
+      ) : (
+        <>
+          <textarea
+            ref={taRef}
+            rows={1}
+            value={desc}
+            onChange={(e) => { setDesc(e.target.value); autoGrow(e.currentTarget) }}
+            onInput={(e) => autoGrow(e.currentTarget)}
+            placeholder="Description"
+            className="w-full px-3 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none
+                       resize-none overflow-hidden leading-5"
+            style={{ height: '0px' }}
+          />
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={save}
+              disabled={saving}
+              className="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={cancel}
+              className="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }
+
 
 function EditPanel({ task, onChanged }: { task: Task, onChanged: () => void }) {
   const [tagsInput, setTagsInput] = useState((task.tags || []).map(t => t.name).join(', '))
@@ -456,7 +588,7 @@ function EditPanel({ task, onChanged }: { task: Task, onChanged: () => void }) {
         <label className="block text-sm">
           <div className="mb-1">
             <div className="font-medium">Tags</div>
-            <div className="text-xs text-slate-400">comma-separated</div>
+            <div className="text-xs text-slate-400">Only one tag</div>
           </div>
           <input
             value={tagsInput}
