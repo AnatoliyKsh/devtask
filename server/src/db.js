@@ -35,7 +35,7 @@ function migrate() {
       project_id TEXT,
       title TEXT NOT NULL,
       description TEXT DEFAULT '',
-      status TEXT DEFAULT 'backlog', -- backlog|in_progress|review|done
+status TEXT NOT NULL,
       priority INTEGER DEFAULT 2,     -- 1 high,2 normal,3 low
       due_date TEXT,                  -- ISO date
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,

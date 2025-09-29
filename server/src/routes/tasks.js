@@ -71,15 +71,40 @@ router.get('/:id', (req, res) => {
 });
 
 // Create
+// Create
 router.post('/', (req, res) => {
-  const { projectId = null, title, description = '', status = 'backlog', priority = 2, dueDate = null, tags = [], subtasks = [], customFields = {} } = req.body;
-  if (!title || typeof title !== 'string') return res.status(400).json({ error: 'title is required' });
+  const {
+    projectId = null,
+    title,
+    description = '',
+    status = 'backlog',     // может прийти любой ключ колонки
+    priority = 2,
+    dueDate = null,
+    tags = [],
+    subtasks = [],
+    customFields = {}
+  } = req.body;
+
+  if (!title || typeof title !== 'string') {
+    return res.status(400).json({ error: 'title is required' });
+  }
+
+  // нормализуем статус: trim + ограничим длину, чтобы не ломать БД/индексы
+  const safeStatus = (typeof status === 'string' && status.trim())
+    ? status.trim().slice(0, 32)
+    : 'backlog';
+
   const id = nanoid();
-  db.prepare(`INSERT INTO tasks(id, project_id, title, description, status, priority, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, projectId, title, description, status, priority, dueDate);
+
+  db.prepare(`
+    INSERT INTO tasks(id, project_id, title, description, status, priority, due_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, projectId, title, description, safeStatus, priority, dueDate);
+
   db.prepare(`INSERT INTO activities(id, task_id, kind, payload) VALUES(?, ?, ?, ?)`)
     .run(nanoid(), id, 'task_created', JSON.stringify({ title }));
 
+  // остальное — без изменений
   for (const name of tags) {
     const tagRow = db.prepare(`SELECT * FROM tags WHERE name=?`).get(name);
     if (tagRow) {
@@ -97,32 +122,70 @@ router.post('/', (req, res) => {
         .run(id, field.id, String(customFields[key]));
     }
   }
+
   const row = db.prepare('SELECT * FROM tasks WHERE id=?').get(id);
   res.status(201).json({ id, ...row });
 });
 
+
+// Update
 // Update
 router.put('/:id', (req, res) => {
   const { title, description, status, priority, dueDate, projectId } = req.body;
   const existing = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
-  db.prepare(`UPDATE tasks SET title=?, description=?, status=?, priority=?, due_date=?, project_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-    .run(title ?? existing.title, description ?? existing.description, status ?? existing.status, priority ?? existing.priority, dueDate ?? existing.due_date, projectId ?? existing.project_id, req.params.id);
+
+  const safeStatus =
+    typeof status === 'string' && status.trim()
+      ? status.trim().slice(0, 32)
+      : existing.status;
+
+  db.prepare(`
+    UPDATE tasks
+    SET title=?,
+        description=?,
+        status=?,
+        priority=?,
+        due_date=?,
+        project_id=?,
+        updated_at=CURRENT_TIMESTAMP
+    WHERE id=?
+  `).run(
+    title ?? existing.title,
+    description ?? existing.description,
+    safeStatus,
+    priority ?? existing.priority,
+    dueDate ?? existing.due_date,
+    projectId ?? existing.project_id,
+    req.params.id
+  );
+
   res.json({ ok: true });
 });
 
+
+
 // Patch status
 router.patch('/:id/status', (req, res) => {
-  const { status } = req.body;
-  const allowed = ['backlog', 'in_progress', 'review', 'done'];
-  if (!allowed.includes(status)) return res.status(400).json({ error: 'invalid status' });
-  const row = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: 'not found' });
-  db.prepare('UPDATE tasks SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(status, req.params.id);
-  db.prepare(`INSERT INTO activities(id, task_id, kind, payload) VALUES(?, ?, ?, ?)`)
-    .run(nanoid(), req.params.id, 'status_changed', JSON.stringify({ from: row.status, to: status }));
+  const raw = req.body && typeof req.body.status === 'string' ? req.body.status : '';
+  const status = raw.trim();
+  if (!status) return res.status(400).json({ error: 'invalid status' });
+
+  const task = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+
+  const safe = status.slice(0, 64);
+  db.prepare('UPDATE tasks SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+    .run(safe, req.params.id);
+
+  db.prepare('INSERT INTO activities(id, task_id, kind, payload) VALUES(?, ?, ?, ?)')
+    .run(nanoid(), req.params.id, 'status_changed', JSON.stringify({ from: task.status, to: safe }));
+
   res.json({ ok: true });
 });
+
+
+
 
 // Manage tags for a task
 router.post('/:id/tags', (req, res) => {

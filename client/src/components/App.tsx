@@ -12,14 +12,27 @@ import { CSS } from '@dnd-kit/utilities'
 
 
 
+type Column = { id: string; key: string; title: string };
+
+function defaultColumns(): Column[] {
+  return [
+    { id: 'backlog', key: 'backlog', title: 'Backlog' },
+    { id: 'in_progress', key: 'in_progress', title: 'In Progress' },
+    { id: 'review', key: 'review', title: 'Review' },
+    { id: 'done', key: 'done', title: 'Done' },
+  ];
+}
+
+// простейший слаг
+function slugify(name: string) {
+  return name.trim().toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .slice(0, 32) || 'col_' + Math.random().toString(36).slice(2, 8);
+}
 
 
-const statusColumns: { key: Status; title: string }[] = [
-  { key: 'backlog', title: 'Backlog' },
-  { key: 'in_progress', title: 'In Progress' },
-  { key: 'review', title: 'Review' },
-  { key: 'done', title: 'Done' },
-]
+
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -41,6 +54,70 @@ export default function App() {
   const canCreate = !!activeProject;
 
   const reqId = useRef(0)
+
+
+  const [columns, setColumns] = useState<Column[]>(defaultColumns());
+
+  function loadColumnsForProject(pid: string | null) {
+    if (!pid) { setColumns(defaultColumns()); return; }
+    const saved = localStorage.getItem(`columns:${pid}`);
+    setColumns(saved ? JSON.parse(saved) as Column[] : defaultColumns());
+  }
+  function saveColumns(next: Column[]) {
+    setColumns(next);
+    if (activeProject) localStorage.setItem(`columns:${activeProject}`, JSON.stringify(next));
+  }
+
+  function renameColumnDirect(key: string, name: string) {
+    const newTitle = name.trim();
+    if (!newTitle) return;
+    const next = columns.map(c => c.key === key ? { ...c, title: newTitle } : c);
+    saveColumns(next);
+  }
+
+
+  function addColumn() {
+    const name = prompt('Column name');
+    if (!name) return;
+    const key = slugify(name);
+    if (columns.some(c => c.key === key)) return alert('Column already exists');
+    saveColumns([...columns, { id: key, key, title: name.trim() }]);
+  }
+  function renameColumn(key: string) {
+    const col = columns.find(c => c.key === key);
+    if (!col) return;
+    const name = prompt('Rename column', col.title);
+    if (!name) return;
+    const next = columns.map(c => c.key === key ? { ...c, title: name.trim() } : c);
+    saveColumns(next);
+  }
+  function deleteColumn(key: string) {
+    // не удаляем, если в колонке есть задачи
+    if (tasks.some(t => t.status === key)) {
+      return alert('This column has tasks. Move or delete them first.');
+    }
+    const next = columns.filter(c => c.key !== key);
+    saveColumns(next.length ? next : defaultColumns());
+  }
+  function moveColumn(index: number, dir: -1 | 1) {
+    const next = [...columns];
+    const j = index + dir;
+    if (j < 0 || j >= next.length) return;
+    const [x] = next.splice(index, 1);
+    next.splice(j, 0, x);
+    saveColumns(next);
+  }
+
+  // навигация "предыдущая/следующая" колонка для кнопок ↤/↦
+  const prevOf = (k: string) => {
+    const i = columns.findIndex(c => c.key === k);
+    return i > 0 ? columns[i - 1].key : null;
+  };
+  const nextOf = (k: string) => {
+    const i = columns.findIndex(c => c.key === k);
+    return (i >= 0 && i < columns.length - 1) ? columns[i + 1].key : null;
+  };
+
 
   async function refresh(
     projectId: string | null = activeProject,
@@ -72,7 +149,6 @@ export default function App() {
     }
   }
 
-
   useEffect(() => {
     (async () => {
       setLoading(true)
@@ -83,21 +159,23 @@ export default function App() {
 
         const saved = localStorage.getItem('activeProjectId')
         const initialId = saved || (projectsArr[0]?.id ?? null)
+
         setActiveProject(initialId)
+        await loadColumnsForProject(initialId) // ← грузим колонки для проекта
 
         if (initialId) {
           const [t, g] = await Promise.all([
             listTasks({ projectId: initialId, tagId: activeTagId || undefined }),
             listTags(),
           ])
-
-
           setTasks(Array.isArray(t) ? t : [])
           setTags(Array.isArray(g) ? g : [])
         } else {
           setTasks([])
           setTags([])
+          setColumns(defaultColumns()) // ← сброс колонок, если проекта нет
         }
+
       } catch (e) {
         console.error('bootstrap failed:', e)
         setTasks([]); setTags([])
@@ -111,35 +189,33 @@ export default function App() {
     const { active, over } = event
     if (!over) return
 
-    // id целевой колонки = ключ статуса
-    const toStatus = over.id as Status
+    const toStatus = String(over.id);
+    const taskId = String(active.id);
+    const fromStatus = active.data?.current?.fromStatus as string | undefined;
+    if (!toStatus || !taskId || fromStatus === toStatus) return;
 
-    // id таски = id draggable
-    const taskId = String(active.id)
-
-    // исходный статус, который мы записали в data draggable
-    const fromStatus = active.data?.current?.fromStatus as Status | undefined
-
-    if (!toStatus || !taskId) return
-    if (fromStatus && fromStatus === toStatus) return
+    await setTaskStatus(taskId, toStatus); // ← без as unknown as Status
+    refresh(activeProject, activeTagId);
 
     try {
-      await setTaskStatus(taskId, toStatus)
+      await setTaskStatus(taskId, toStatus as unknown as Status) // 👈 каст
     } finally {
-      // обновим с учётом текущего проекта/тега
       refresh(activeProject, activeTagId)
     }
   }
 
 
 
+
   useEffect(() => {
     if (activeProject) {
       localStorage.setItem('activeProjectId', activeProject)
+      loadColumnsForProject(activeProject)     //  ВАЖНО
       refresh(activeProject, activeTagId)
     } else {
       localStorage.removeItem('activeProjectId')
       setTasks([])
+      setColumns(defaultColumns())             //  СБРОС
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject, activeTagId])
@@ -289,12 +365,14 @@ export default function App() {
             />
             <form
               onSubmit={async (e) => {
-                e.preventDefault()
-                if (!canCreate || !quickTitle.trim()) return
-                await createTask({ title: quickTitle.trim(), projectId: activeProject! })
-                setQuickTitle('')
-                refresh(activeProject, activeTagId) // если refresh принимает tagId
+                e.preventDefault();
+                if (!canCreate || !quickTitle.trim()) return;
+                const first = columns[0]?.key || 'backlog';
+                await createTask({ title: quickTitle.trim(), projectId: activeProject!, status: first });
+                setQuickTitle('');
+                refresh(activeProject, activeTagId);
               }}
+
               className="flex items-center gap-2"
             >
 
@@ -318,18 +396,32 @@ export default function App() {
             {loading && <div className="text-sm text-slate-400">Loading…</div>}
           </div>
           <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-            <div className="grid grid-cols-4 gap-4">
-              {statusColumns.map(col => (
+            <div className="flex items-center gap-2 mb-3">
+              <button onClick={addColumn} className="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700">
+                + Column
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-4 sm:grid-cols-2 grid-cols-1 gap-4">
+              {columns.map((col, idx) => (
                 <Column
                   key={col.key}
-                  title={col.title}
-                  status={col.key}
+                  column={col}
+                  index={idx}
                   tasks={filtered.filter(t => t.status === col.key)}
+                  onMoveLeft={() => moveColumn(idx, -1)}
+                  onMoveRight={() => moveColumn(idx, +1)}
+                  onRename={(newTitle) => renameColumnDirect(col.key, newTitle)}
+                  onDelete={() => deleteColumn(col.key)}
                   onChanged={() => refresh(activeProject, activeTagId)}
+                  prevOf={prevOf}
+                  nextOf={nextOf}
                 />
+
               ))}
             </div>
           </DndContext>
+
         </main>
       </div>
     </div>
@@ -337,28 +429,116 @@ export default function App() {
 }
 
 function Column({
-  title, status, tasks, onChanged,
-}: { title: string, status: Status, tasks: Task[], onChanged: () => void }) {
-  const { setNodeRef, isOver } = useDroppable({ id: status })
+  column, index, tasks, onChanged, onMoveLeft, onMoveRight, onRename, onDelete,
+  prevOf, nextOf,
+}: {
+  column: { key: string; title: string },
+  index: number,
+  tasks: Task[],
+  onChanged: () => void,
+  onMoveLeft: () => void,
+  onMoveRight: () => void,
+  onRename: (newTitle: string) => void,
+  onDelete: () => void,
+  prevOf: (k: string) => string | null,
+  nextOf: (k: string) => string | null,
+}) {
+
+  const { setNodeRef, isOver } = useDroppable({ id: column.key });
+
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(column.title);
+
+  useEffect(() => setTitle(column.title), [column.title]);
+
+  function commit() {
+    const t = title.trim();
+    setEditing(false);
+    if (t && t !== column.title) onRename(t);
+    else setTitle(column.title);
+  }
+
+  function cancel() {
+    setEditing(false);
+    setTitle(column.title);
+  }
+
+
 
   return (
     <div
       ref={setNodeRef}
-      className={`rounded-2xl bg-slate-900/60 border p-3 ${isOver ? 'border-indigo-500' : 'border-slate-800'
-        }`}
+      className={`group rounded-2xl bg-slate-900/60 border p-3 ${isOver ? 'border-indigo-500' : 'border-slate-800'}`}
     >
-      <div className="text-sm font-semibold mb-2 text-slate-300">
-        {title} <span className="text-slate-500">({tasks.length})</span>
+
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+          {!editing ? (
+            <button
+              onClick={() => setEditing(true)}
+              className="px-1 rounded hover:bg-slate-800/60 cursor-text"
+              title="Click to rename"
+            >
+              {column.title}
+            </button>
+          ) : (
+            <input
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit();
+                if (e.key === 'Escape') cancel();
+              }}
+              className="px-2 py-1 bg-slate-900 border border-slate-700 rounded outline-none"
+            />
+          )}
+          <span className="text-slate-500">({tasks.length})</span>
+        </div>
+
+        {/* Кнопки видны только при hover на колонке */}
+        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={onMoveLeft} className="text-xs w-6 h-6 rounded bg-slate-800 hover:bg-slate-700">←</button>
+          <button onClick={onMoveRight} className="text-xs w-6 h-6 rounded bg-slate-800 hover:bg-slate-700">→</button>
+
+          <button
+            onClick={onDelete}
+            className="text-xs w-6 h-6 rounded bg-slate-800 hover:bg-red-600"
+            title="Delete column"
+            aria-label="Delete column"
+          >
+            ×
+          </button>
+        </div>
       </div>
+
+
       <div className="space-y-3">
-        {tasks.map(t => <TaskCard key={t.id} task={t} onChanged={onChanged} />)}
+        {tasks.map(t => (
+          <TaskCard
+            key={t.id}
+            task={t}
+            onChanged={onChanged}
+            prev={prevOf}
+            next={nextOf}
+          />
+        ))}
       </div>
     </div>
-  )
+  );
 }
 
 
-function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
+
+function TaskCard({
+  task, onChanged, prev, next
+}: {
+  task: Task,
+  onChanged: () => void,
+  prev: (k: string) => string | null,
+  next: (k: string) => string | null
+}) {
+
   const [open, setOpen] = useState(false)
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -382,10 +562,12 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
     setOpen(v => !v)
   }
 
-  async function move(next: Status) {
-    await setTaskStatus(task.id, next)
+  async function move(nextKey: string) {
+    await setTaskStatus(task.id, nextKey)
     onChanged()
   }
+
+
   async function remove() {
     if (confirm('Delete task?')) {
       await deleteTask(task.id)
@@ -421,23 +603,16 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
 
 
         <div className="mt-2 flex gap-1 flex-wrap">
-          {task.status !== 'backlog' && (
-            <button onClick={() => move('backlog')} className="text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700">↤</button>
+          {prev(task.status) && (
+            <button onClick={() => move(prev(task.status)!)} className="text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700">↤</button>
           )}
-          {task.status !== 'done' && (
-            <button onClick={() => move(nextOf(task.status))} className="text-xs px-2 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500">↦</button>
+          {next(task.status) && (
+            <button onClick={() => move(next(task.status)!)} className="text-xs px-2 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500">↦</button>
           )}
-          <button
-            onClick={toggleOpen}
-            aria-expanded={open}
-            title={open ? 'Close details' : 'Open details'}
-            className={`text-xs px-2 py-1 rounded-md hover:bg-slate-700 ${open ? 'bg-slate-700' : 'bg-slate-800'
-              }`}
-          >
-            {open ? 'Close' : 'Open'}
-          </button>
+          <button onClick={toggleOpen} className="text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700">{open ? 'Close' : 'Open'}</button>
           <button onClick={remove} className="text-xs px-2 py-1 rounded-md bg-red-600 hover:bg-red-500">Delete</button>
         </div>
+
       </div>
 
 
@@ -474,11 +649,7 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
   )
 }
 
-function nextOf(s: Status): Status {
-  if (s === 'backlog') return 'in_progress'
-  if (s === 'in_progress') return 'review'
-  return 'done'
-}
+
 
 function DescriptionEditor({ task, onChanged }: { task: Task, onChanged: () => void }) {
   const [desc, setDesc] = useState(task.description || '')
