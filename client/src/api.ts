@@ -9,6 +9,13 @@ export const listProjects = async () => (await API.get<Project[]>('/projects')).
 export const createProject = async (name: string, color: string) => (await API.post('/projects', { name, color })).data
 export const listTags = async () => (await API.get<Tag[]>('/tags')).data
 export const createTag = async (name: string, color: string) => (await API.post('/tags', { name, color })).data
+export async function deleteProject(id: string) {
+  const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete project')
+  return res.json() // или return { ok: true } — не критично
+}
+
+
 
 export interface TaskFilters {
   q?: string
