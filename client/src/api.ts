@@ -24,10 +24,13 @@ export interface TaskFilters {
   tag?: string
   due?: 'today'
 }
-export const listTasks = async (filters: TaskFilters = {}) => {
-  const params = new URLSearchParams()
-  Object.entries(filters).forEach(([k,v]) => v && params.append(k, String(v)))
-  return (await API.get<Task[]>('/tasks?'+params.toString())).data
+export async function listTasks(params: { projectId?: string; tagId?: string } = {}) {
+  const qs = new URLSearchParams()
+  if (params.projectId) qs.set('projectId', params.projectId)
+  if (params.tagId)     qs.set('tagId', params.tagId)
+  const res = await fetch(`/api/tasks?` + qs.toString())
+  if (!res.ok) throw new Error('Failed to list tasks')
+  return res.json()
 }
 export const getTask = async (id: string) => (await API.get<Task>('/tasks/'+id)).data
 export const createTask = async (payload: Partial<Task> & { title: string }) => (await API.post('/tasks', payload)).data
