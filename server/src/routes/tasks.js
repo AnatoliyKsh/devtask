@@ -18,30 +18,38 @@ function rowToTask(row) {
   };
 }
 
-// List tasks with filters
+// List tasks with filters (supports tagId or tag name)
+// List tasks with filters (supports ?projectId=...&tagId=... or &tag=name)
 router.get('/', (req, res) => {
-  const { q, status, projectId, tag, due } = req.query;
-  let sql = `SELECT * FROM tasks WHERE 1=1`;
+  const { q, status, projectId, tagId, tag, due } = req.query;
+
+  const hasTag = !!tagId || !!tag;
+
+  let sql = `
+    SELECT DISTINCT t.*
+    FROM tasks t
+    ${hasTag ? 'JOIN task_tags tt ON tt.task_id = t.id JOIN tags tg ON tg.id = tt.tag_id' : ''}
+    WHERE 1=1
+  `;
   const params = [];
-  if (q) { sql += ` AND (title LIKE ? OR description LIKE ?)`; params.push(`%${q}%`, `%${q}%`); }
-  if (status) { sql += ` AND status=?`; params.push(status); }
-  if (projectId) { sql += ` AND project_id=?`; params.push(projectId); }
+
+  if (projectId) { sql += ' AND t.project_id = ?'; params.push(projectId); }
+  if (status) { sql += ' AND t.status = ?'; params.push(status); }
+  if (q) { sql += ' AND (t.title LIKE ? OR t.description LIKE ?)'; params.push(`%${q}%`, `%${q}%`); }
   if (due === 'today') {
-    const today = new Date().toISOString().slice(0,10);
-    sql += ` AND due_date = ?`; params.push(today);
+    const today = new Date().toISOString().slice(0, 10);
+    sql += ' AND t.due_date = ?'; params.push(today);
   }
-  if (tag) {
-    sql = `SELECT t.* FROM tasks t JOIN task_tags tt ON t.id=tt.task_id JOIN tags tg ON tg.id=tt.tag_id WHERE tg.name=?` + (projectId?` AND t.project_id=?`:'') + (status?` AND t.status=?`:'') + (q?` AND (t.title LIKE ? OR t.description LIKE ?)`:'')
-    const p2 = [tag];
-    if (projectId) p2.push(projectId);
-    if (status) p2.push(status);
-    if (q) { p2.push(`%${q}%`, `%${q}%`); }
-    const rows = db.prepare(sql).all(...p2);
-    return res.json(rows.map(rowToTask));
-  }
-  const rows = db.prepare(sql + ' ORDER BY created_at DESC').all(...params);
+  if (tagId) { sql += ' AND tg.id = ?'; params.push(tagId); }
+  else if (tag) { sql += ' AND tg.name = ?'; params.push(tag); }
+
+  sql += ' ORDER BY t.created_at DESC';
+
+  const rows = db.prepare(sql).all(...params);
   res.json(rows.map(rowToTask));
 });
+
+
 
 // Get one
 router.get('/:id', (req, res) => {
@@ -64,7 +72,7 @@ router.get('/:id', (req, res) => {
 
 // Create
 router.post('/', (req, res) => {
-  const { projectId=null, title, description='', status='backlog', priority=2, dueDate=null, tags=[], subtasks=[], customFields={} } = req.body;
+  const { projectId = null, title, description = '', status = 'backlog', priority = 2, dueDate = null, tags = [], subtasks = [], customFields = {} } = req.body;
   if (!title || typeof title !== 'string') return res.status(400).json({ error: 'title is required' });
   const id = nanoid();
   db.prepare(`INSERT INTO tasks(id, project_id, title, description, status, priority, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -106,7 +114,7 @@ router.put('/:id', (req, res) => {
 // Patch status
 router.patch('/:id/status', (req, res) => {
   const { status } = req.body;
-  const allowed = ['backlog','in_progress','review','done'];
+  const allowed = ['backlog', 'in_progress', 'review', 'done'];
   if (!allowed.includes(status)) return res.status(400).json({ error: 'invalid status' });
   const row = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
@@ -118,7 +126,7 @@ router.patch('/:id/status', (req, res) => {
 
 // Manage tags for a task
 router.post('/:id/tags', (req, res) => {
-  const { tags=[] } = req.body;
+  const { tags = [] } = req.body;
   const taskId = req.params.id;
   db.prepare('DELETE FROM task_tags WHERE task_id=?').run(taskId);
   for (const name of tags) {
@@ -140,7 +148,7 @@ router.patch('/subtasks/:subId', (req, res) => {
   const { title, done } = req.body;
   const row = db.prepare('SELECT * FROM subtasks WHERE id=?').get(req.params.subId);
   if (!row) return res.status(404).json({ error: 'not found' });
-  db.prepare('UPDATE subtasks SET title=?, done=? WHERE id=?').run(title ?? row.title, typeof done==='number'?done: (done?1:row.done), req.params.subId);
+  db.prepare('UPDATE subtasks SET title=?, done=? WHERE id=?').run(title ?? row.title, typeof done === 'number' ? done : (done ? 1 : row.done), req.params.subId);
   res.json({ ok: true });
 });
 router.delete('/subtasks/:subId', (req, res) => {

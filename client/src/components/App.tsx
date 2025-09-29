@@ -24,15 +24,26 @@ export default function App() {
   const [quickTitle, setQuickTitle] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const [activeTagId, setActiveTagId] = useState<string | null>(null)
+
+
+  const canCreate = !!activeProject;
+
   const reqId = useRef(0)
 
-  async function refresh(projectId: string | null = activeProject) {
+  async function refresh(
+    projectId: string | null = activeProject,
+    tagId: string | null = activeTagId
+  ) {
     const my = ++reqId.current
     setLoading(true)
     try {
       const [p, t, g] = await Promise.all([
         listProjects(),
-        listTasks({ projectId: projectId || undefined }),
+        listTasks({
+          projectId: projectId || undefined,
+          tagId: tagId || undefined,
+        }),
         listTags(),
       ])
       if (my !== reqId.current) return
@@ -50,6 +61,7 @@ export default function App() {
     }
   }
 
+
   useEffect(() => {
     (async () => {
       setLoading(true)
@@ -64,9 +76,11 @@ export default function App() {
 
         if (initialId) {
           const [t, g] = await Promise.all([
-            listTasks({ projectId: initialId }),
+            listTasks({ projectId: initialId, tagId: activeTagId || undefined }),
             listTags(),
           ])
+
+
           setTasks(Array.isArray(t) ? t : [])
           setTags(Array.isArray(g) ? g : [])
         } else {
@@ -85,20 +99,14 @@ export default function App() {
   useEffect(() => {
     if (activeProject) {
       localStorage.setItem('activeProjectId', activeProject)
-      refresh(activeProject)
+      refresh(activeProject, activeTagId)
     } else {
       localStorage.removeItem('activeProjectId')
       setTasks([])
     }
-  }, [activeProject])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject, activeTagId])
 
-  async function onQuickAdd(e: React.FormEvent) {
-    e.preventDefault()
-    if (!quickTitle.trim()) return
-    await createTask({ title: quickTitle.trim(), projectId: activeProject })
-    setQuickTitle('')
-    refresh(activeProject)
-  }
 
   async function onCreateProject() {
     const name = prompt('Name of the project')
@@ -120,18 +128,19 @@ export default function App() {
     if (nextId) localStorage.setItem('activeProjectId', nextId)
     else localStorage.removeItem('activeProjectId')
 
-    refresh(nextId)
+    refresh(nextId, activeTagId)
+
   }
 
   const filtered = useMemo(() => {
     let arr = Array.isArray(tasks) ? tasks : []
-    if (activeProject) arr = arr.filter(t => t.projectId === activeProject)
     if (query.trim()) {
       const q = query.toLowerCase()
       arr = arr.filter(t => (t.title + ' ' + (t.description || '')).toLowerCase().includes(q))
     }
     return arr
-  }, [tasks, query, activeProject])
+  }, [tasks, query])
+
 
   return (
     <div className="min-h-screen text-slate-200 bg-slate-950 bg-radial">
@@ -165,8 +174,9 @@ export default function App() {
                       onClick={() => {
                         setActiveProject(p.id)
                         localStorage.setItem('activeProjectId', p.id)
-                        refresh(p.id)
+                        refresh(p.id, activeTagId)
                       }}
+
                       className="flex-1 text-left min-w-0"
                       title="Open project"
                     >
@@ -192,16 +202,42 @@ export default function App() {
           <div className="mt-6 space-y-2">
             <div className="text-xs uppercase tracking-wide text-slate-400">Tags</div>
             <div className="flex flex-wrap gap-2">
-              {tags.map(t => (
-                <span
-                  key={t.id}
-                  className="px-2 py-0.5 rounded-full text-xs border border-slate-700"
-                  style={{ borderColor: t.color, color: t.color }}
-                >
-                  {t.name}
-                </span>
-              ))}
+              {/* Кнопка "All" для сброса фильтра */}
+              <button
+                onClick={() => { setActiveTagId(null); refresh(activeProject, null) }}
+                className={`px-2 py-0.5 rounded-full text-xs border ${activeTagId === null
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'border-slate-700 text-slate-300 hover:bg-slate-800/50'
+                  }`}
+              >
+                All
+              </button>
+
+              {tags.map(t => {
+                const active = activeTagId === t.id
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      const next = active ? null : t.id
+                      setActiveTagId(next)
+                      refresh(activeProject, next)
+                    }}
+                    className={`px-2 py-0.5 rounded-full text-xs border transition ${active ? '' : 'hover:bg-slate-800/50'
+                      }`}
+                    style={
+                      active
+                        ? { background: t.color, borderColor: t.color, color: '#0a0a0a', fontWeight: 600 }
+                        : { borderColor: t.color, color: t.color }
+                    }
+                    title={`Filter by ${t.name}`}
+                  >
+                    {t.name}
+                  </button>
+                )
+              })}
             </div>
+
           </div>
         </aside>
 
@@ -214,15 +250,34 @@ export default function App() {
               placeholder="Search (⌘/Ctrl+K)"
               className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 w-80 outline-none focus:ring-2 ring-indigo-500"
             />
-            <form onSubmit={onQuickAdd} className="flex items-center gap-2">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                if (!canCreate || !quickTitle.trim()) return
+                await createTask({ title: quickTitle.trim(), projectId: activeProject! })
+                setQuickTitle('')
+                refresh(activeProject, activeTagId) // если refresh принимает tagId
+              }}
+              className="flex items-center gap-2"
+            >
+
               <input
                 value={quickTitle}
                 onChange={e => setQuickTitle(e.target.value)}
-                placeholder="Quickly add…"
-                className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 w-[28rem] outline-none focus:ring-2 ring-indigo-500"
+                placeholder={canCreate ? "Quickly add…" : "Select a project to add tasks"}
+                title={canCreate ? "" : "Select a project first"}
+                disabled={!canCreate}
+                className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 w-[28rem] outline-none focus:ring-2 ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
               />
-              <button className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500">Add</button>
+              <button
+                disabled={!canCreate}
+                title={canCreate ? "" : "Select a project first"}
+                className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
             </form>
+
             {loading && <div className="text-sm text-slate-400">Loading…</div>}
           </div>
 
@@ -233,7 +288,7 @@ export default function App() {
                 title={col.title}
                 status={col.key}
                 tasks={filtered.filter(t => t.status === col.key)}
-                onChanged={() => refresh(activeProject)}
+                onChanged={() => refresh(activeProject, activeTagId)}
               />
             ))}
           </div>
@@ -284,9 +339,9 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
   return (
     <div className="rounded-xl bg-slate-900 border border-slate-800 p-3 hover:border-slate-700 transition overflow-hidden">
       {/* Верхняя строка: заголовок + кнопки (кнопки могут переноситься, не вылезают) */}
-      <div className="flex items-center gap-2 min-w-0">
-        <div className="font-medium flex-1 min-w-0 truncate">{task.title}</div>
-        <div className="flex gap-1 flex-wrap">
+      <div className="min-w-0">
+        <div className="font-medium truncate">{task.title}</div>
+        <div className="mt-2 flex gap-1 flex-wrap">
           {task.status !== 'backlog' && (
             <button onClick={() => move('backlog')} className="text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700">↤</button>
           )}
@@ -297,6 +352,7 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
           <button onClick={remove} className="text-xs px-2 py-1 rounded-md bg-red-600 hover:bg-red-500">Delete</button>
         </div>
       </div>
+
 
       {task.dueDate && (
         <div className="text-xs text-slate-400 mt-1">date: {task.dueDate}</div>
@@ -322,8 +378,12 @@ function TaskCard({ task, onChanged }: { task: Task, onChanged: () => void }) {
           <div className="text-xs text-slate-400 mb-2">
             Created: {full.createdAt ? new Date(full.createdAt).toLocaleString() : ''}
           </div>
-          <SubtasksEditor task={full} onChanged={onChanged} />
-          <EditPanel task={full} onChanged={onChanged} />
+          <DescriptionEditor task={full} onChanged={onChanged} />
+          <EditPanel
+            task={full}
+            onChanged={() => { onChanged(); setOpen(false); }}  // после сохранения закрываем карточку
+          />
+
         </div>
       )}
     </div>
@@ -336,48 +396,44 @@ function nextOf(s: Status): Status {
   return 'done'
 }
 
-function SubtasksEditor({ task, onChanged }: { task: Task, onChanged: () => void }) {
-  const [title, setTitle] = useState('')
+function DescriptionEditor({ task, onChanged }: { task: Task, onChanged: () => void }) {
+  const [desc, setDesc] = useState(task.description || '')
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+
+  async function save() {
+    if (saving) return
+    setSaving(true)
+    try {
+      await updateTask(task.id, { description: desc })
+      setSavedAt(Date.now())
+      onChanged() // перезагрузит данные и обновит превью markdown выше
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="mt-2">
-      <div className="text-sm font-semibold mb-2">Subtasks</div>
-      <ul className="space-y-1">
-        {(task.subtasks || []).map(st => (
-          <li key={st.id} className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              defaultChecked={!!st.done}
-              onChange={async (e) => {
-                await fetch(`http://localhost:3001/api/tasks/subtasks/${st.id}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ done: e.target.checked ? 1 : 0 })
-                })
-                onChanged()
-              }}
-            />
-            <span className={`text-sm ${st.done ? 'line-through text-slate-500' : ''}`}>{st.title}</span>
-          </li>
-        ))}
-      </ul>
-      <form
-        className="flex gap-2 mt-2"
-        onSubmit={async (e) => {
-          e.preventDefault()
-          if (!title.trim()) return
-          await addSubtask(task.id, title.trim())
-          setTitle('')
-          onChanged()
-        }}
-      >
-        <input
-          value={title}
-          onChange={e => setTitle(e.target.value)}
-          placeholder="New subtask…"
-          className="px-2 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none"
-        />
-        <button className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-sm">Add</button>
-      </form>
+      <div className="text-sm font-semibold mb-2">Description</div>
+
+      <textarea
+        value={desc}
+        onChange={e => setDesc(e.target.value)}
+        placeholder="Write description… (Markdown supported)"
+        className="w-full min-h-[120px] px-3 py-2 rounded-md bg-slate-900 border border-slate-800 outline-none"
+      />
+
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? 'Saving…' : 'Save description'}
+        </button>
+        {savedAt && <span className="text-xs text-slate-400">Saved {new Date(savedAt).toLocaleTimeString()}</span>}
+      </div>
     </div>
   )
 }
@@ -395,28 +451,42 @@ function EditPanel({ task, onChanged }: { task: Task, onChanged: () => void }) {
 
   return (
     <div className="mt-3 border-t border-slate-800 pt-3">
-      <div className="grid grid-cols-3 gap-3">
-        <label className="text-sm">Tags
+      <div className="space-y-3">
+        {/* Tags */}
+        <label className="block text-sm">
+          <div className="mb-1">
+            <div className="font-medium">Tags</div>
+            <div className="text-xs text-slate-400">comma-separated</div>
+          </div>
           <input
             value={tagsInput}
             onChange={e => setTagsInput(e.target.value)}
-            placeholder="comma-separated"
-            className="mt-1 w-full px-2 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none"
+            placeholder="bug, backend, urgent"
+            className="w-full px-2 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none"
           />
         </label>
-        <label className="text-sm">Date
+
+        {/* Date */}
+        <label className="block text-sm">
+          <div className="mb-1">
+            <div className="font-medium">Date</div>
+            <div className="text-xs text-slate-400">mm/dd/yyyy</div>
+          </div>
           <input
             type="date"
             value={due}
             onChange={e => setDue(e.target.value)}
-            className="mt-1 w-full px-2 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none"
+            className="w-full px-2 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none"
           />
         </label>
-        <label className="text-sm">Priority
+
+        {/* Priority */}
+        <label className="block text-sm">
+          <div className="mb-1 font-medium">Priority</div>
           <select
             value={priority}
             onChange={e => setPriority(Number(e.target.value) as 1 | 2 | 3)}
-            className="mt-1 w-full px-2 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none"
+            className="w-full px-2 py-1 rounded-md bg-slate-900 border border-slate-800 outline-none"
           >
             <option value={1}>High</option>
             <option value={2}>Medium</option>
@@ -424,6 +494,7 @@ function EditPanel({ task, onChanged }: { task: Task, onChanged: () => void }) {
           </select>
         </label>
       </div>
+
       <div className="mt-3">
         <button onClick={save} className="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500">Save</button>
       </div>
