@@ -17,6 +17,7 @@ export async function deleteProject(id: string) {
 
 
 
+
 export interface TaskFilters {
   q?: string
   status?: string
@@ -32,6 +33,9 @@ export async function listTasks(params: { projectId?: string; tagId?: string } =
   if (!res.ok) throw new Error('Failed to list tasks')
   return res.json()
 }
+
+
+
 export const getTask = async (id: string) => (await API.get<Task>('/tasks/'+id)).data
 export const createTask = async (payload: Partial<Task> & { title: string }) => (await API.post('/tasks', payload)).data
 export const updateTask = async (id: string, payload: Partial<Task>) => (await API.put('/tasks/'+id, payload)).data

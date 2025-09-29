@@ -1,6 +1,10 @@
 ## DevFlow – Digital Task Manager
 
- <img src="photo\Screenshot (228).png">
+ <img src="photo\Screenshot (229).png">
+
+
+  <img src="photo\Screenshot (230).png">
+
 
 Kanban app with Projects, Tasks, Tags, and Markdown descriptions.
 
@@ -11,11 +15,22 @@ Backend: Node.js + Express + better-sqlite3 (SQLite)
 Dev UX: Vite proxy for clean /api calls, hot reload on both sides
 
 ## Core Features
-- **Projects:** create/select/delete (deletes all project tasks), color badges, active project is remembered.
-- **Kanban:** Backlog → In Progress → Review → Done; quick move (↤/↦).
-- **Tasks:** quick add, title/status/priority/due date, Markdown description, open/close details.
-- **Tags:** sidebar tag filter (toggle + “All”).
-- **Search:** client-side (title + description).
+
+1. Projects. Create/select/delete projects (deleting a project removes its tasks); 
+
+2. Boards & Columns. Default columns (Backlog/In Progress/Review/Done) plus custom columns per project: add, inline-rename (click title), delete (if empty), and reorder (◀/▶). Layout is persisted per project (localStorage).
+
+3. Kanban + Drag & Drop. Move tasks across any column with dnd-kit; columns highlight on hover; quick move buttons (↤/↦) still available.
+
+4. Tasks. Quick add (to the first column), full title expands in the opened card, status/priority/due date, delete, created timestamp.
+
+5. Description (Markdown). Preview + edit mode with auto-resizing textarea and Save/Cancel; Markdown rendered with marked.
+
+6. Tags. Attach tags to tasks; sidebar tag filter with toggle behavior and an “All” reset; colored tag chips on the card.
+
+7. Search. Client-side search over task title + description.
+
+8. Persistence & API. SQLite-backed REST API (Express). Task status is a free-form string, so custom columns are fully supported on the backend as well. Seed data included for first run.
 
 ## How to Use
 1. Create a **project** in the sidebar and open it.
@@ -38,13 +53,13 @@ Utils: nanoid (IDs), marked (Markdown)
 ### Backend
 1. cd server
 2. npm install
-3. npm run dev         # starts http://localhost:3001
+3. npm run dev       
 
 ### Frontend
 
 1. cd client
 2. npm install
-3. npm run dev         # opens http://localhost:5173
+3. npm run dev         
 
 ## How to Use
 

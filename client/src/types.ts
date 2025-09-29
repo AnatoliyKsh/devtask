@@ -1,6 +1,6 @@
 export type ID = string;
 
-export type Status = 'backlog' | 'in_progress' | 'review' | 'done';
+export type Status = string;
 
 export interface Project {
   id: ID;
