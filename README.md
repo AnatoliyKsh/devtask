@@ -1,6 +1,6 @@
 ## DevFlow – Digital Task Manager
 
- ![Screenshot .png](photo\Screenshot (228).png) 
+ <img src="photo\Screenshot (228).png">
 
 Kanban app with Projects, Tasks, Tags, and Markdown descriptions.
 
